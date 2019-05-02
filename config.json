@@ -1,0 +1,96 @@
+{
+  "name": "Advanced DET",
+
+  "namespace":"Stanford\\AdvancedDET",
+
+  "description": "A module that supports multiple DET URLs on a given project and offers logic to control DET execution.  It also includes a utility for re-calling a DET url on selected records (e.g. Mass DET)",
+
+  "versions": [
+    {
+      "1.0.0": "Initial Release"
+    }
+  ],
+
+  "authors": [
+    {
+      "name": "Andy Martin",
+      "email": "andy123@stanford.edu",
+      "institution": "Stanford University"
+    }
+  ],
+
+  "permissions": [
+    "redcap_save_record",
+    "redcap_every_page_top",
+    "redcap_module_save_configuration"
+  ],
+
+  "links": {
+    "control-center": [
+    ],
+    "project": [
+      {
+        "name": "Advanced DET",
+        "icon": "gear",
+        "url": "Project.php"
+      }
+    ]
+  },
+
+  "system-settings": [
+    {
+      "key": "enable-system-debug-logging",
+      "name": "<b>Enable Debug Logging (system-wide)</b>",
+      "required": false,
+      "type": "checkbox"
+    }
+  ],
+
+  "project-settings": [
+    {
+      "key": "descriptive-text",
+      "name": "<b>Advanced DET is used when you need to apply more than one DET url to a project.</b>",
+      "type": "descriptive"
+    },
+    {
+      "key": "dets",
+      "name": "List of DET Triggers",
+      "required": false,
+      "type": "sub_settings",
+      "repeatable":true,
+      "sub_settings":[
+        {
+          "key": "title",
+          "name": "<b>Title</b><br>(optional) A title/description for the DET",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "key": "url",
+          "name": "<b>URL</b><br>The url for the DET endpoint",
+          "required": true,
+          "type": "text"
+        },
+        {
+          "key": "logic",
+          "name": "<b>Logic</b><br>(optional) If provided, must be true or DET will not fire.<br><i>(e.g. [form_a_complete] = '2'</i>",
+          "required": false,
+          "type": "textarea"
+        },
+        {
+          "key": "disabled",
+          "name": "<b>Disable</b><br>Check to disable this DET",
+          "required": false,
+          "type": "checkbox"
+        }
+
+      ]
+    },
+    {
+      "key": "enable-project-debug-logging",
+      "name": "<b>Enable Debug Logging</b>",
+      "required": false,
+      "type": "checkbox"
+    }
+  ]
+}
