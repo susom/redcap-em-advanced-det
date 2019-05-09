@@ -25,19 +25,13 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
     function redcap_save_record($project_id, $record, $instrument, $event_id, $group_id, $survey_hash, $response_id, $repeat_instance) {
 
         // Load all DET configs
-        $detInstances = $this->getSubSettings("dets");
+        $detInstances = $this->getEnabledDets();
         $results = array();
 
         foreach ($detInstances as $i => $det) {
             $url   = $det['url'];
             $title = $det['title'];
             $logic = $det['logic'];
-
-            if ($det['disabled']) {
-                $this->emDebug("$title disabled");
-                $results[$i] = "$title disabled";
-                continue;
-            }
 
             if (empty($url)) {
                 $this->emDebug("$i: URL missing");
@@ -78,6 +72,14 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
     }
 
 
+    /**
+     * Call the DET based on hte specified payload
+     *
+     * @param     $url
+     * @param     $payload
+     * @param int $timeout
+     * @return string
+     */
     function callDet($url, $payload, $timeout=10) {
         // Set timeout value for http request
 
@@ -88,12 +90,26 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
         }
 
         // Send Post request
-        // $response = http_post($pre_url . $url, $payload, $timeout);
-        $response = "test";
+        $response = http_post($pre_url . $url, $payload, $timeout);
 
         $this->emDebug($pre_url . $url, $payload, $response);
 
         return $response;
+    }
+
+
+    /**
+     * Get all enabled Advanced DETs
+     * @return array
+     */
+    function getEnabledDets() {
+        // Load all DET configs that are not disabled
+        $detInstances = $this->getSubSettings("dets");
+        $results = array();
+        foreach ($detInstances as $i => $det) {
+            if (!$det['disabled']) $results[] = $det;
+        }
+        return $results;
     }
 
 
@@ -106,7 +122,7 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
      * @param      $instrument
      * @param      $event_id
      * @param null $record_data*
-     * @return array containing one entry per instance with the repeat_instance key and the instrument_complete key
+     * @return array containing a subset of the payload with one entry per instance and the current instrument_complete value
      */
     function getFormInstanceCompleteArray($record_id, $instrument, $event_id, $repeat_instance = null, $record_data = null) {
         // If record_data is passed in, then
@@ -159,6 +175,7 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
 
 
     /**
+     * A helper to distinguish between repeat none, forms, or events
      * @param $instrument
      * @return string "none", "form", "event"
      */
@@ -176,14 +193,13 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
 
     /**
      * Return array of DET payloads (for each record/instance combination)
-     * @param      $project_id
-     * @param      $record              Single record id or array of record ids
-     * @param      $instrument
-     * @param      $event_id
-     * @param null $group_id
-     * @param null $repeat_instance
-     * @param null $record_data         For batch, supply, otherwise will be fetched automatically
-     * @param null $instrument_complete Leave null to use existing value, otherwise set to value from this arg
+     * @param string $record                record id or array of record ids
+     * @param string $instrument
+     * @param int    $event_id
+     * @param null   $group_id
+     * @param null   $repeat_instance
+     * @param null   $record_data           For batch, supply, otherwise will be fetched automatically
+     * @param null   $instrument_complete   Leave null to use existing value, otherwise set to value from this arg
      * @return array
      */
     function getDetPayloadArray($record, $instrument, $event_id, $group_id = null, $repeat_instance = null, $record_data = null, $instrument_complete = null) {
@@ -223,13 +239,12 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
             }
         }
 
-        // $this->emDebug($records, $results);
         return $results;
     }
 
 
     /**
-     * Lets add some UI enhancements
+     * Lets add some UI enhancements to show the advanced DETs
      * @param null $project_id
      */
     function redcap_every_page_top($project_id = null) {
@@ -237,160 +252,33 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
         if (PAGE == "ProjectSetup/index.php") {
             global $lang;
 
-            // Get nummber of DETs
+            // Get the number of DETs
             $instances = $this->getSubSettings("dets");
 
+            $niceButton = "<a href='" . $this->getUrl("Project.php") . "'>
+                        <span class='btn btn-xs btn-primaryrc'>            
+                            <span style='text-indent: 0; margin-left: 0;' class='badge badge-light'>" . count($instances) . "</span> 
+                            Advanced DETs Enabled
+                            <span class='small'> Click to review</span>
+                        </span>
+                    </a>";
+
             // Add something to Additional Customizations page
-            $lang['edit_project_160'] .= "<br>
-                <div style='text-indent: 0; border-color: #333 !important;' class='alert alert-information'>
-                    <h6 class='text-center'>" . count($instances) . " Advanced DETs Enabled.</h6>
-                    This project uses the Advanced DET EM.  Use the External Module configuration to add/edit configuration
-                </div>";
+            $lang['edit_project_160'] .= "<br><div style='text-indent: 0;' class='mt-3 mb-3'>$niceButton</div>";
 
             // Add something to project setup page
-            ?>
-            <script>
-                $(document).ready(function() {
-                    $('#setupChklist-modules .chklisttext').append(
-                        '<div style="margin-bottom:2px;color:#800000";> ' +
-                        '  <span class="badge badge-secondary" style="vertical-align: middle; padding: 4px 4px;"><?php echo count($instances) ?></span>' +
-                        '  <span style="padding-top:2px;"> Advanced DETs Enabled - use External Modules to configure</span> ' +
-                        '</div>'
-                    );
-                });
-            </script>
-            <?php
-            // $this->addSurveyIcons();
-            // $this->addSurveySettingsDisclaimer();
-        }
-
-    }
-
-
-    /**
-     * Return a html table of DETs if they exist - otherwise nothing
-     */
-    function getDetTable() {
-        $instances = $this->getSubSettings("dets");
-        $body = [];
-        foreach ($instances as $i => $det) {
-            $title    = $det['title'];
-            $url      = $det['url'];
-            $logic    = $det['logic'];
-            $disabled = $det['disabled'] ? 1 : 0;
-            $body[] = "<tr><td>$title</td><td>$url</td><td>$logic</td><td>$disabled</td></tr>";
-        }
-
-        $result = "";
-        if (!empty($body)) {
-            $result = "
-                <table id='advanced_det' class='display' style='width:100%'>
-                    <thead>
-                        <tr><th>Title</th><th>Url</th><th>Logic</th><th>Disabled</th></tr>
-                    </thead>
-                    <tbody>
-                        " . implode("", $body) . "
-                    </tbody>
-                </table>";
-        }
-
-        return $result;
-    }
-
-
-    /**
-     * Adding some more info to the survey Settings page as well.
-     */
-    function addSurveySettingsDisclaimer()
-    {
-        if (PAGE == "Surveys/edit_info.php" || PAGE == "Surveys/create_survey.php") {
-            $survey_name = $_GET['page'];
-
-            // Get current value from external-module settings
-            $this->loadConfig();
-
-            // Nothing to do if there isn't logic for this instrument
-            if (empty($this->auto_continue_logic[$survey_name])) return;
-
-            ?>
-            <div style="display:none;">
-                <table>
-                    <tr id="AdvancedDET-tr" style="padding: 10px 0;">
-                        <td valign="top" style="width:20px;">
-                            <i class="fas fa-code-branch"></i>
-                        </td>
-                        <td valign="top">
-                            <div class=""><strong>AdvancedDET EM is configured:</strong></div>
-                        </td>
-                        <td valign="top" style="padding-left:15px;">
-                            <div>This survey will only be administered if the logic below is <b>true</b>:
-                                <a href="javascript:;" class="help2" onclick="simpleDialog('<p>This project has the AdvancedDET External Module installed. ' +
-                                  'If someone tries to open this survey and this logic is not true, the participant will be redirected to the next available survey.</p>' +
-                                  '<p>If the logic is false and there are no more eligible surveys after this, then the participant will receive the ' +
-                                   'the end-of-survey options as configured below.</p>' +
-                                   '<p>You can change these setting in the External Module config page</p>','AdvancedDET External Module',600);">?</a>
-                            </div>
-                            <code style="font-weight:normal; background-color:white; display:block; padding: 5px; width: 98%; border: 1px solid #c1c1c1;;">
-                                <?php echo $this->auto_continue_logic[$survey_name]; ?>
-                            </code>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-
-            <script>
-                $(document).ready(function () {
-                    var parentTr = $('#end_survey_redirect_next_survey').closest('tr');
-                    $('#AdvancedDET-tr')
-                        .insertAfter($('#save_and_return-tr'))
-                        .show()
-                    ;
-                });
-            </script>
-            <?php
-
-        }
-    }
-
-
-
-    /**
-     * On the edit instrument table it shows a lock icon next to surveys that have webauth enabled
-     */
-    function addSurveyIcons()
-    {
-        if (PAGE == "Design/online_designer.php") {
-            $this->loadConfig();
-
-            if (count($this->auto_continue_logic) > 0) {
-                $tip = '';
+            if (count($instances)>0) {
                 ?>
                 <script>
                     $(document).ready(function () {
-                        var autocontinue_logic_surveys = <?php echo json_encode($this->auto_continue_logic); ?>;
-                        console.log("Here", autocontinue_logic_surveys);
-                        $.each(autocontinue_logic_surveys, function (i, j) {
-                            console.log(i,j);
-                            var img = $('<a href="#"><i class="fas fa-code-branch"></i></a>')
-                                .attr('title', "<div style='font-size: 10pt;'>This survey uses the AutoContinue Logic EM and <u>only</u> renders if the following is true:</div><code style='font-size: 9pt;'>" + autocontinue_logic_surveys[i] + "</code>")
-                                // .css({'margin-left': '3px'})
-                                .attr('data-html', true)
-                                // .attr('data-toggle', 'tooltip')
-                                .attr('data-trigger', 'hover')
-                                .attr('data-placement', 'right')
-                                .insertAfter('a.modsurvstg[href*="page=' + i + '&"]');
-                            img.popover(); //tooltip();
-                        });
-                        $('a.modsurvstg').removeAttr('style');
+                        var niceButton = "<?php echo str_replace("\n", "", $niceButton) ?>";
+                        $('#setupChklist-modules .chklisttext').append(niceButton);
                     });
                 </script>
-                <style>
-                    a.modsurvstg { display:inline-block; }
-                </style>
                 <?php
             }
         }
-    }
 
+    }
 
 }
