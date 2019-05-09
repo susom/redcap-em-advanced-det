@@ -25,10 +25,10 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
     function redcap_save_record($project_id, $record, $instrument, $event_id, $group_id, $survey_hash, $response_id, $repeat_instance) {
 
         // Load all DET configs
-        $instances = $this->getSubSettings("dets");
+        $detInstances = $this->getSubSettings("dets");
         $results = array();
 
-        foreach ($instances as $i => $det) {
+        foreach ($detInstances as $i => $det) {
             $url   = $det['url'];
             $title = $det['title'];
             $logic = $det['logic'];
@@ -44,7 +44,6 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
                 $results[$i] = "URL missing";
                 continue;
             }
-
 
             if (!empty($logic)) {
                 $result = REDCap::evaluateLogic($logic, $project_id, $record, $event_id, $repeat_instance);
@@ -62,12 +61,17 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
                 }
             }
 
+            $payloads = $this->getDetPayloadArray($record, $instrument, $event_id, $group_id, $repeat_instance);
+            if(count($payloads) > 1) {
+                $this->emError("Got more than one payload from a save_Record hook - this shouldn't happen:", $payloads, $record, $instrument, $event_id, $repeat_instance);
+            }
 
-            $payload = $this->getPayload($project_id, $record, $instrument, $event_id, $group_id, $repeat_instance);
-            $response = $this->callDet($url, $payload);
+            foreach($payloads as $j => $payload) {
+                $response = $this->callDet($url, $payload);
+                $results[$i][$j] = !!$response;
+            }
 
             // Return boolean for success
-            $results[$i] = !!$response;
         } //end loop
 
         $this->emDebug("SAVE RESULTS: " . json_encode($results, JSON_FORCE_OBJECT));
@@ -84,7 +88,8 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
         }
 
         // Send Post request
-        $response = http_post($pre_url . $url, $payload, $timeout);
+        // $response = http_post($pre_url . $url, $payload, $timeout);
+        $response = "test";
 
         $this->emDebug($pre_url . $url, $payload, $response);
 
@@ -92,39 +97,134 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
     }
 
 
-    function getPayload($project_id, $record, $instrument, $event_id, $group_id, $repeat_instance) {
-        global $Proj;
+    /**
+     * Parse out the array of instances (or one if not repeating) along with the insturment status.
+     * If you call this with record data, it will use it, otherwise it will call for data itself on
+     * the supplied record.
+     *
+     * @param      $record_id
+     * @param      $instrument
+     * @param      $event_id
+     * @param null $record_data*
+     * @return array containing one entry per instance with the repeat_instance key and the instrument_complete key
+     */
+    function getFormInstanceCompleteArray($record_id, $instrument, $event_id, $repeat_instance = null, $record_data = null) {
+        // If record_data is passed in, then
+        if (is_null($record_data)) {
+            // Get the data for just this record
+            $record_data = REDCap::getData('array', array($record_id), array(REDCap::getRecordIdField(), $instrument . "_complete"), array($event_id));
+        }
 
+        $record = @$record_data[$record_id];
+        $icf = $instrument . "_complete";       // Instrument Complete Field
+
+
+        $results = array();     // Initialize the results array
+        $instances = array();   // Initialize an empty array
+        $repeatType = $this->getRepeatInstrumentType($instrument,$event_id);
+        switch($repeatType) {
+            case "form":
+                $instances = @$record["repeat_instances"][$event_id][$instrument];
+                break;
+            case "instrument":
+                $instances = @$record["repeat_instances"][$event_id][""];
+                break;
+            case "none":
+                // Check if the form_status is defined (meaning there is a record on this event)
+                $form_status = @$record[$event_id][$icf];
+                if (is_numeric($form_status)) {
+                    $results[] = [
+                        $icf => $form_status
+                    ];
+                }
+                break;
+        }
+
+        if (!empty($instances)) {
+            foreach ($instances as $instance_id => $instance_data) {
+                // If we are running on save we only want to call the det for the instance specified if repeating
+                if (empty($repeat_instance) || $repeat_instance == $instance_id) {
+                    $result = [
+                        "redcap_repeat_instance" => $instance_id,
+                        $icf                     => $instance_data[$icf]
+                    ];
+                    if ($repeatType == "form") $result["redcap_repeat_instrument"] = $instrument;
+                    $results[] = $result;
+                }
+            }
+        }
+        $this->emDebug("getFormInstanceCompleteArray results for $record_id - $instrument - $event_id", $results);
+        return $results;
+    }
+
+
+    /**
+     * @param $instrument
+     * @return string "none", "form", "event"
+     */
+    function getRepeatInstrumentType($instrument, $event_id) {
+        global $Proj;
+        if ($Proj->isRepeatingForm($event_id, $instrument)) {
+            return "form";
+        } elseif ($Proj->isRepeatingEvent($event_id)) {
+            return "event";
+        } else {
+            return "none";
+        }
+    }
+
+
+    /**
+     * Return array of DET payloads (for each record/instance combination)
+     * @param      $project_id
+     * @param      $record              Single record id or array of record ids
+     * @param      $instrument
+     * @param      $event_id
+     * @param null $group_id
+     * @param null $repeat_instance
+     * @param null $record_data         For batch, supply, otherwise will be fetched automatically
+     * @param null $instrument_complete Leave null to use existing value, otherwise set to value from this arg
+     * @return array
+     */
+    function getDetPayloadArray($record, $instrument, $event_id, $group_id = null, $repeat_instance = null, $record_data = null, $instrument_complete = null) {
+        global $Proj;
+        $results = array();
+
+        // Make record into an array if not passed in as such
+        $records = is_array($record) ? $record : array($record);
+
+        // Template payload
         $payload = array(
             "redcap_url"  => APP_PATH_WEBROOT_FULL,
             "project_url" => APP_PATH_WEBROOT_FULL . "redcap_v" . REDCAP_VERSION . "/index.php?pid=" . PROJECT_ID,
-            "project_id"  => $project_id,
+            "project_id"  => $this->getProjectId(),
             "username"    => USERID,
-            "record"      => $record,
             "instrument"  => $instrument
         );
 
-        // Get the instrument status
-        $instrument_complete_field           = $instrument . "_complete";
-        $q                                   = REDCap::getData('json', $record, array($instrument_complete_field), $event_id);
-        $q                                   = json_decode($q, true);
-        $payload[$instrument_complete_field] = $q[0][$instrument_complete_field];
+        // Events
+        if ($Proj->longitudinal) {
+            $events = REDCap::getEventNames(true);
+            $payload['redcap_event_name'] = $events[$event_id];
+        }
 
-        // Events and Data Access Groups
-        if ($Proj->longitudinal) $payload['redcap_event_name']        = REDCap::getEventNames($event_id);
+        // Data Access Groups
         if (!empty($group_id))   $payload['redcap_data_access_group'] = REDCap::getGroupNames($group_id);
 
-        // Repeating events/instruments
-        if ($Proj->hasRepeatingFormsEvents()) {
-            if ($Proj->isRepeatingForm($event_id, $instrument)) {
-                $payload['redcap_repeat_instrument'] = $instrument;
-                $payload['redcap_repeat_instance']   = $repeat_instance;
-            } elseif ($Proj->isRepeatingEvent($_GET['event_id'])) {
-                $payload['redcap_repeat_instance'] = $repeat_instance;
+        foreach ($records as $record) {
+            // Get the instrument status (as anb array)
+            $instances = $this->getFormInstanceCompleteArray($record, $instrument, $event_id, $repeat_instance, $record_data);
+            foreach ($instances as $instance) {
+                $result = array_merge($payload, $instance, array("record" => $record));
+
+                // Override the instrument complete it set
+                if (!is_null($instrument_complete)) $result[$instrument . "_complete"] = $instrument_complete;
+                $results[] = $result;
             }
         }
 
-        return $payload;
+        // $this->emDebug($records, $results);
+        return $results;
     }
 
 
@@ -196,6 +296,7 @@ class AdvancedDET extends \ExternalModules\AbstractExternalModule {
 
         return $result;
     }
+
 
     /**
      * Adding some more info to the survey Settings page as well.
